@@ -1,0 +1,177 @@
+// Prisma schema for Quetzalito
+// Mirror of database/001_schema.sql
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String    @id @default(uuid()) @db.Uuid
+  email           String    @unique @db.VarChar(255)
+  passwordHash    String    @map("password_hash") @db.VarChar(255)
+  firstName       String    @map("first_name") @db.VarChar(80)
+  lastName        String    @map("last_name") @db.VarChar(80)
+  nickname        String    @db.VarChar(40)
+  phone           String?   @db.VarChar(20)
+  avatarUrl       String?   @map("avatar_url")
+  isPremium       Boolean   @default(false) @map("is_premium")
+  language        String    @default("es") @db.VarChar(5)
+  currencyCode    String    @default("GTQ") @map("currency_code") @db.Char(3)
+  theme           String    @default("light") @db.VarChar(10)
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz
+  lastLoginAt     DateTime? @map("last_login_at") @db.Timestamptz
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  refreshTokens     RefreshToken[]
+  envelopes         Envelope[]
+  transactions      Transaction[]
+  categories        Category[]
+  budgets           Budget[]
+  subscriptions     Subscription[]
+  verificationCodes VerificationCode[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  tokenHash  String    @map("token_hash") @db.VarChar(255)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz
+  userAgent  String?   @map("user_agent")
+  ipAddress  String?   @map("ip_address") @db.VarChar(45)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@map("refresh_tokens")
+}
+
+model Currency {
+  code   String @id @db.Char(3)
+  name   String @db.VarChar(60)
+  symbol String @db.VarChar(5)
+
+  @@map("currencies")
+}
+
+model Category {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  name      String   @db.VarChar(50)
+  icon      String   @db.VarChar(50)
+  color     String   @db.VarChar(7)
+  type      String   @db.VarChar(10) // 'income' | 'expense' | 'both'
+  isSystem  Boolean  @default(false) @map("is_system")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user         User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+  budgets      Budget[]
+
+  @@index([userId])
+  @@map("categories")
+}
+
+model Envelope {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  name           String    @db.VarChar(50)
+  description    String?
+  icon           String    @default("💰") @db.VarChar(50)
+  color          String    @default("#10B981") @db.VarChar(7)
+  isMain         Boolean   @default(false) @map("is_main")
+  targetAmount   Decimal?  @map("target_amount") @db.Decimal(14, 2)
+  currentBalance Decimal   @default(0) @map("current_balance") @db.Decimal(14, 2)
+  archivedAt     DateTime? @map("archived_at") @db.Timestamptz
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([userId])
+  @@map("envelopes")
+}
+
+model Transaction {
+  id                   String   @id @default(uuid()) @db.Uuid
+  userId               String   @map("user_id") @db.Uuid
+  envelopeId           String   @map("envelope_id") @db.Uuid
+  categoryId           String?  @map("category_id") @db.Uuid
+  type                 String   @db.VarChar(15) // income|expense|transfer_out|transfer_in
+  amount               Decimal  @db.Decimal(14, 2)
+  description          String?  @db.VarChar(255)
+  occurredAt           DateTime @default(now()) @map("occurred_at") @db.Timestamptz
+  relatedTransactionId String?  @map("related_transaction_id") @db.Uuid
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  envelope Envelope  @relation(fields: [envelopeId], references: [id], onDelete: Restrict)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  related  Transaction?  @relation("TransactionPair", fields: [relatedTransactionId], references: [id], onDelete: SetNull)
+  pairedBy Transaction[] @relation("TransactionPair")
+
+  @@index([userId, occurredAt(sort: Desc)])
+  @@index([envelopeId, occurredAt(sort: Desc)])
+  @@index([categoryId])
+  @@map("transactions")
+}
+
+model Budget {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  categoryId  String   @map("category_id") @db.Uuid
+  amount      Decimal  @db.Decimal(14, 2)
+  periodYear  Int      @map("period_year")
+  periodMonth Int      @map("period_month")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, categoryId, periodYear, periodMonth])
+  @@index([userId, periodYear, periodMonth])
+  @@map("budgets")
+}
+
+model Subscription {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  plan             String    @db.VarChar(20)
+  status           String    @db.VarChar(20)
+  startsAt         DateTime  @map("starts_at") @db.Timestamptz
+  endsAt           DateTime? @map("ends_at") @db.Timestamptz
+  paymentProvider  String?   @map("payment_provider") @db.VarChar(30)
+  paymentReference String?   @map("payment_reference")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("subscriptions")
+}
+
+model VerificationCode {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  codeHash    String    @map("code_hash") @db.VarChar(255)
+  purpose     String    @db.VarChar(30)
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz
+  consumedAt  DateTime? @map("consumed_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+  @@map("verification_codes")
+}
