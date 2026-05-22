@@ -15,9 +15,8 @@ import { TransactionsModule } from './modules/transactions/transactions.module';
 import { BudgetsModule } from './modules/budgets/budgets.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
+import { HealthModule } from './modules/health/health.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
-
-import { MailerModule } from './modules/mailer/mailer.module';
 
 @Module({
   imports: [
@@ -42,10 +41,9 @@ import { MailerModule } from './modules/mailer/mailer.module';
     BudgetsModule,
     DashboardModule,
     SubscriptionsModule,
+    HealthModule,
   ],
   providers: [
-    // Guard global: TODA ruta es privada por defecto.
-    // Para abrir una ruta usa @Public() en el controller.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
   ],

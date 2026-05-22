@@ -5,7 +5,7 @@ APP_NAME=Quetzalito
 FRONTEND_URL=http://localhost:3000
 
 # ===== Database =====
-DATABASE_URL=postgresql://XXX:XXX@localhost:5432/XXXXX?schema=public
+DATABASE_URL=postgresql://quetzalito:quetzalito_dev_pwd@localhost:5432/quetzalito?schema=public
 
 # ===== JWT =====
 # Genera con: openssl rand -base64 64
