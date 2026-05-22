@@ -14,10 +14,12 @@ export class DashboardController {
     @CurrentUser() user: AuthenticatedUser,
     @Query('year') yearStr?: string,
     @Query('month') monthStr?: string,
+    @Query('lang') lang?: string,
   ) {
     const now = new Date();
     const year = yearStr ? parseInt(yearStr, 10) : now.getFullYear();
     const month = monthStr ? parseInt(monthStr, 10) : now.getMonth() + 1;
+    const language = (lang === 'en' ? 'en' : 'es') as 'es' | 'en';
 
     if (
       !Number.isInteger(year) ||
@@ -27,8 +29,8 @@ export class DashboardController {
       month < 1 ||
       month > 12
     ) {
-      throw new BadRequestException('Periodo inválido.');
+      throw new BadRequestException(language === 'es' ? 'Periodo inválido.' : 'Invalid period.');
     }
-    return this.dashboard.getDashboard(user.sub, year, month);
+    return this.dashboard.getDashboard(user.sub, year, month, language);
   }
 }

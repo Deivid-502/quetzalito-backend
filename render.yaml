@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: quetzalito-api
+    runtime: node
+    region: oregon         # Cambiar a frankfurt si tu tráfico es de LATAM/EU
+    plan: free             # Cambiar a starter en producción real
+    buildCommand: npm install && npm run build && npx prisma generate
+    startCommand: npm run start:prod
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      # Las siguientes variables se configuran manualmente en el dashboard de Render:
+      # DATABASE_URL      → conexión a Neon (PostgreSQL)
+      # JWT_ACCESS_SECRET → openssl rand -base64 64
+      # JWT_REFRESH_SECRET → openssl rand -base64 64
+      # FRONTEND_URL      → URL de Vercel (ej. https://quetzalito.vercel.app)
+      # COOKIE_DOMAIN     → dominio de Vercel sin https://
+      # SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM → credenciales SMTP

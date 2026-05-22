@@ -15,6 +15,9 @@ import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { VerifyCodeDto } from './dto/verify-code.dto';
+import { RequestSensitiveCodeDto } from './dto/request-sensitive-code.dto';
+import { VerifySensitiveCodeDto } from './dto/verify-sensitive-code.dto';
 import { Public } from '../../common/decorators/public.decorator';
 import {
   CurrentUser,
@@ -119,9 +122,64 @@ export class AuthController {
         currencyCode: true,
         language: true,
         theme: true,
+        emailVerifiedAt: true,
       },
     });
     return { user };
+  }
+
+  // =========================================================
+  //  POST /api/auth/verify-email/send
+  //  Reenviar código de verificación de email
+  // =========================================================
+  @Post('verify-email/send')
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async sendVerification(@CurrentUser() current: AuthenticatedUser) {
+    await this.auth.sendEmailVerification(current.sub);
+  }
+
+  // =========================================================
+  //  POST /api/auth/verify-email/confirm
+  //  Confirmar con el código recibido
+  // =========================================================
+  @Post('verify-email/confirm')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async confirmEmail(
+    @CurrentUser() current: AuthenticatedUser,
+    @Body() dto: VerifyCodeDto,
+  ) {
+    await this.auth.verifyEmail(current.sub, dto.code);
+  }
+
+  // =========================================================
+  //  POST /api/auth/sensitive/request
+  //  Solicitar código 2FA para cambio sensible
+  // =========================================================
+  @Post('sensitive/request')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async requestSensitiveCode(
+    @CurrentUser() current: AuthenticatedUser,
+    @Body() dto: RequestSensitiveCodeDto,
+  ) {
+    await this.auth.requestSensitiveCode(current.sub, dto.purpose);
+  }
+
+  // =========================================================
+  //  POST /api/auth/sensitive/verify
+  //  Verificar código 2FA — devuelve un token de un solo uso
+  // =========================================================
+  @Post('sensitive/verify')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @HttpCode(HttpStatus.OK)
+  async verifySensitiveCode(
+    @CurrentUser() current: AuthenticatedUser,
+    @Body() dto: VerifySensitiveCodeDto,
+  ) {
+    await this.auth.verifySensitiveCode(current.sub, dto.code, dto.purpose);
+    return { verified: true, purpose: dto.purpose };
   }
 
   // =========================================================

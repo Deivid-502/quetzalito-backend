@@ -5,6 +5,8 @@ import { APP_GUARD } from '@nestjs/core';
 
 import { configuration } from './config/configuration';
 import { PrismaModule } from './database/prisma/prisma.module';
+import { AuditModule } from './common/audit/audit.module';
+import { MailerModule } from './modules/mailer/mailer.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { EnvelopesModule } from './modules/envelopes/envelopes.module';
@@ -14,6 +16,8 @@ import { BudgetsModule } from './modules/budgets/budgets.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
+
+import { MailerModule } from './modules/mailer/mailer.module';
 
 @Module({
   imports: [
@@ -28,6 +32,8 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
       },
     ]),
     PrismaModule,
+    AuditModule,
+    MailerModule,
     AuthModule,
     UsersModule,
     EnvelopesModule,

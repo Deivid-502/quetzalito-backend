@@ -4,6 +4,7 @@ import {
   UnauthorizedException,
   BadRequestException,
   Logger,
+  TooManyRequestsException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -11,8 +12,17 @@ import * as argon2 from 'argon2';
 import { createHash, randomBytes } from 'crypto';
 
 import { PrismaService } from '../../database/prisma/prisma.service';
+import { MailerService } from '../mailer/mailer.service';
+import { AuditService } from '../../common/audit/audit.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+
+// Cuántos minutos tiene validez un código
+const CODE_TTL_MIN = 10;
+// Cooldown mínimo entre reenvíos (segundos)
+const RESEND_COOLDOWN_SEC = 60;
+// Máximo de intentos fallidos antes de invalidar el código
+const MAX_ATTEMPTS = 5;
 
 export interface AuthTokens {
   accessToken: string;
@@ -43,6 +53,8 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly mailer: MailerService,
+    private readonly audit: AuditService,
   ) {}
 
   // =========================================================
@@ -99,6 +111,13 @@ export class AuthService {
 
     const tokens = await this.issueTokens(user.id, user.email, meta);
 
+    void this.audit.log({ userId: user.id, action: 'AUTH_REGISTER', status: 'ok', ...meta });
+
+    // Enviar verificación de email en background (no bloquea la respuesta)
+    this.sendEmailVerification(user.id).catch((err) =>
+      this.logger.error(`Error enviando verificación a ${user.email}: ${err}`),
+    );
+
     return { user: this.toPublicUser(user), tokens };
   }
 
@@ -113,13 +132,16 @@ export class AuthService {
     const invalid = new UnauthorizedException('Correo o contraseña inválidos.');
 
     if (!user) {
-      // Aún así hacemos un hash dummy para evitar timing attacks
       await argon2.hash('dummy-password-for-timing');
+      void this.audit.log({ action: 'AUTH_LOGIN_FAIL', status: 'fail', meta: { reason: 'user_not_found' }, ...meta });
       throw invalid;
     }
 
     const ok = await argon2.verify(user.passwordHash, dto.password);
-    if (!ok) throw invalid;
+    if (!ok) {
+      void this.audit.log({ userId: user.id, action: 'AUTH_LOGIN_FAIL', status: 'fail', meta: { reason: 'wrong_password' }, ...meta });
+      throw invalid;
+    }
 
     await this.prisma.user.update({
       where: { id: user.id },
@@ -127,6 +149,7 @@ export class AuthService {
     });
 
     const tokens = await this.issueTokens(user.id, user.email, meta);
+    void this.audit.log({ userId: user.id, action: 'AUTH_LOGIN', status: 'ok', ...meta });
     return { user: this.toPublicUser(user), tokens };
   }
 
@@ -187,8 +210,168 @@ export class AuthService {
   }
 
   // =========================================================
-  //  HELPERS
+  //  VERIFICACIÓN DE EMAIL
   // =========================================================
+  async sendEmailVerification(userId: string): Promise<void> {
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { email: true, emailVerifiedAt: true, language: true },
+    });
+
+    if (user.emailVerifiedAt) return; // Ya verificado
+
+    // Cooldown: si ya hay un código reciente, no reenviar
+    const recent = await this.prisma.verificationCode.findFirst({
+      where: {
+        userId,
+        purpose: 'email_verify',
+        consumedAt: null,
+        createdAt: { gt: new Date(Date.now() - RESEND_COOLDOWN_SEC * 1000) },
+      },
+    });
+
+    if (recent) {
+      throw new TooManyRequestsException(
+        `Esperá ${RESEND_COOLDOWN_SEC} segundos antes de solicitar otro código.`,
+      );
+    }
+
+    // Invalidar códigos anteriores del mismo propósito
+    await this.prisma.verificationCode.updateMany({
+      where: { userId, purpose: 'email_verify', consumedAt: null },
+      data: { consumedAt: new Date() },
+    });
+
+    const { plain, hashed } = this.generateCode();
+
+    await this.prisma.verificationCode.create({
+      data: {
+        userId,
+        codeHash: hashed,
+        purpose: 'email_verify',
+        expiresAt: new Date(Date.now() + CODE_TTL_MIN * 60 * 1000),
+      },
+    });
+
+    const lang = (user.language === 'en' ? 'en' : 'es') as 'es' | 'en';
+    await this.mailer.sendEmailVerification(user.email, plain, lang);
+  }
+
+  async verifyEmail(userId: string, code: string): Promise<void> {
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { emailVerifiedAt: true },
+    });
+
+    if (user.emailVerifiedAt) return;
+
+    try {
+      await this.consumeCode(userId, 'email_verify', code);
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { emailVerifiedAt: new Date() },
+      });
+      void this.audit.log({ userId, action: 'EMAIL_VERIFY_CONFIRM', status: 'ok' });
+    } catch (err) {
+      void this.audit.log({ userId, action: 'EMAIL_VERIFY_FAIL', status: 'fail' });
+      throw err;
+    }
+  }
+
+  // =========================================================
+  //  CÓDIGOS PARA ACCIONES SENSIBLES (2FA ligero)
+  // =========================================================
+  async requestSensitiveCode(
+    userId: string,
+    purpose: 'change_password' | 'change_email',
+  ): Promise<void> {
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { email: true, language: true },
+    });
+
+    // Cooldown por propósito
+    const recent = await this.prisma.verificationCode.findFirst({
+      where: {
+        userId,
+        purpose,
+        consumedAt: null,
+        createdAt: { gt: new Date(Date.now() - RESEND_COOLDOWN_SEC * 1000) },
+      },
+    });
+
+    if (recent) {
+      throw new TooManyRequestsException(
+        `Esperá ${RESEND_COOLDOWN_SEC} segundos antes de solicitar otro código.`,
+      );
+    }
+
+    // Invalidar anteriores
+    await this.prisma.verificationCode.updateMany({
+      where: { userId, purpose, consumedAt: null },
+      data: { consumedAt: new Date() },
+    });
+
+    const { plain, hashed } = this.generateCode();
+
+    await this.prisma.verificationCode.create({
+      data: {
+        userId,
+        codeHash: hashed,
+        purpose,
+        expiresAt: new Date(Date.now() + CODE_TTL_MIN * 60 * 1000),
+      },
+    });
+
+    const lang = (user.language === 'en' ? 'en' : 'es') as 'es' | 'en';
+    await this.mailer.sendSensitiveCode(user.email, plain, purpose, lang);
+  }
+
+  async verifySensitiveCode(
+    userId: string,
+    code: string,
+    purpose: 'change_password' | 'change_email',
+  ): Promise<void> {
+    try {
+      await this.consumeCode(userId, purpose, code);
+      void this.audit.log({ userId, action: 'SENSITIVE_CODE_VERIFY', status: 'ok', meta: { purpose } });
+    } catch (err) {
+      void this.audit.log({ userId, action: 'SENSITIVE_CODE_FAIL', status: 'fail', meta: { purpose } });
+      throw err;
+    }
+  }
+
+  // =========================================================
+  //  HELPERS PRIVADOS
+  // =========================================================
+  private generateCode(): { plain: string; hashed: string } {
+    const plain = String(Math.floor(100000 + Math.random() * 900000));
+    const hashed = createHash('sha256').update(plain).digest('hex');
+    return { plain, hashed };
+  }
+
+  private async consumeCode(userId: string, purpose: string, code: string): Promise<void> {
+    const hashed = createHash('sha256').update(code).digest('hex');
+
+    const record = await this.prisma.verificationCode.findFirst({
+      where: {
+        userId,
+        purpose,
+        consumedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!record || record.codeHash !== hashed) {
+      throw new BadRequestException('Código inválido o expirado.');
+    }
+
+    await this.prisma.verificationCode.update({
+      where: { id: record.id },
+      data: { consumedAt: new Date() },
+    });
+  }
   private async issueTokens(
     userId: string,
     email: string,

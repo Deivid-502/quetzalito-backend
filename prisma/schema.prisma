@@ -175,3 +175,18 @@ model VerificationCode {
   @@index([userId, purpose])
   @@map("verification_codes")
 }
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String?  @map("user_id") @db.Uuid
+  action     String   @db.VarChar(60)   // e.g. AUTH_LOGIN, PASSWORD_CHANGED
+  status     String   @db.VarChar(10)   // ok | fail
+  ipAddress  String?  @map("ip_address") @db.VarChar(45)
+  userAgent  String?  @map("user_agent") @db.VarChar(512)
+  meta       Json?                       // datos extra sin PII sensible
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}

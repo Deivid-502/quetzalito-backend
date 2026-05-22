@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma/prisma.service';
+import { getMessage, getTip, Language } from '../../common/i18n/dashboard-messages';
 
 export type AlertSeverity = 'info' | 'warning' | 'danger';
 
@@ -14,7 +15,7 @@ export interface DashboardAlert {
 export class DashboardService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getDashboard(userId: string, year: number, month: number) {
+  async getDashboard(userId: string, year: number, month: number, language: Language = 'es') {
     const start = new Date(year, month - 1, 1);
     const end = new Date(year, month, 0, 23, 59, 59, 999);
     const now = new Date();
@@ -190,7 +191,7 @@ export class DashboardService {
       noBudgets: budgets.length === 0,
       hasSurplus: net > 0,
       others: others.length,
-    });
+    }, language);
 
     return {
       user: {
@@ -268,7 +269,7 @@ export class DashboardService {
       alerts.push({
         type: 'high_spend',
         severity: 'warning',
-        message: 'Llevás más del 80% de tus ingresos gastados. Andá con cuidado los próximos días.',
+        message: getMessage('spendingWarning', language),
       });
     }
 
@@ -276,7 +277,9 @@ export class DashboardService {
       alerts.push({
         type: 'low_main',
         severity: 'warning',
-        message: 'Tu cuenta principal está casi vacía. Considerá mover dinero desde otro sobre.',
+        message: language === 'es' 
+          ? 'Tu cuenta principal está casi vacía. Considerá mover dinero desde otro sobre.'
+          : 'Your main account is almost empty. Consider moving money from another envelope.',
       });
     }
 
@@ -287,8 +290,8 @@ export class DashboardService {
         severity: 'danger',
         message:
           exceeded.length === 1
-            ? `Excediste el presupuesto de ${exceeded[0].category.name}.`
-            : `Excediste el presupuesto en ${exceeded.length} categorías.`,
+            ? getMessage('budgetExceededSingle', language, exceeded[0].category.name)
+            : getMessage('budgetExceededMultiple', language, exceeded.length),
       });
     }
 
@@ -296,13 +299,15 @@ export class DashboardService {
       alerts.push({
         type: 'no_envelopes',
         severity: 'info',
-        message: 'Creá un sobre para separar tus gastos por propósito y tener mejor control.',
+        message: language === 'es'
+          ? 'Creá un sobre para separar tus gastos por propósito y tener mejor control.'
+          : 'Create an envelope to separate your expenses by purpose and have better control.',
       });
     } else if (!input.hasBudgets) {
       alerts.push({
         type: 'no_budgets',
         severity: 'info',
-        message: 'Definí presupuestos por categoría para saber cuánto podés gastar al mes.',
+        message: getMessage('defineBudgets', language),
       });
     }
 
@@ -314,47 +319,81 @@ export class DashboardService {
     noBudgets: boolean;
     hasSurplus: boolean;
     others: number;
-  }): { title: string; text: string } {
-    // Tips contextuales — primer match gana
-    if (ctx.hasNoTransactions) {
-      return {
-        title: 'Empezá registrando',
-        text: 'Anotá tu primer movimiento del mes para empezar a ver dónde va tu dinero.',
-      };
-    }
-    if (ctx.others === 0) {
-      return {
-        title: 'Organizá en sobres',
-        text: 'Crear un sobre para Comida y otro para Ahorro te ayudará a ver mejor tu plata.',
-      };
-    }
-    if (ctx.noBudgets) {
-      return {
-        title: 'Definí límites',
-        text: 'Un presupuesto te dice cuánto podés gastar. Empezá con uno: Comida o Transporte.',
-      };
-    }
-    if (ctx.hasSurplus) {
-      return {
-        title: 'Pagate primero',
-        text: 'Apenas te entra dinero, mové una parte a un sobre de ahorro antes de gastarlo.',
-      };
-    }
-    // Pool de tips genéricos rotando por día
-    const generic = [
-      {
-        title: 'Regla 50/30/20',
-        text: 'Destiná 50% a necesidades, 30% a deseos y 20% al ahorro o pago de deudas.',
+  }, language: Language = 'es'): { title: string; text: string } {
+    const tips = {
+      es: {
+        noTransactions: {
+          title: 'Empezá registrando',
+          text: 'Anotá tu primer movimiento del mes para empezar a ver dónde va tu dinero.',
+        },
+        noOthers: {
+          title: 'Organizá en sobres',
+          text: 'Crear un sobre para Comida y otro para Ahorro te ayudará a ver mejor tu plata.',
+        },
+        noBudgets: {
+          title: 'Definí límites',
+          text: 'Un presupuesto te dice cuánto podés gastar. Empezá con uno: Comida o Transporte.',
+        },
+        surplus: {
+          title: 'Pagate primero',
+          text: 'Apenas te entra dinero, mové una parte a un sobre de ahorro antes de gastarlo.',
+        },
+        generic: [
+          {
+            title: 'Regla 50/30/20',
+            text: 'Destiná 50% a necesidades, 30% a deseos y 20% al ahorro o pago de deudas.',
+          },
+          {
+            title: 'Anotá lo pequeño',
+            text: 'Los gastos chiquitos suman más de lo que pensás. Registralos al instante.',
+          },
+          {
+            title: 'Antojo de 24 horas',
+            text: 'Antes de comprar algo no esencial, esperá 24 horas. Vas a ver si lo seguís queriendo.',
+          },
+        ],
       },
-      {
-        title: 'Anotá lo pequeño',
-        text: 'Los gastos chiquitos suman más de lo que pensás. Registralos al instante.',
+      en: {
+        noTransactions: {
+          title: 'Start recording',
+          text: 'Write down your first movement of the month to start seeing where your money goes.',
+        },
+        noOthers: {
+          title: 'Organize in envelopes',
+          text: 'Create an envelope for Food and another for Savings to see your money better.',
+        },
+        noBudgets: {
+          title: 'Set limits',
+          text: 'A budget tells you how much you can spend. Start with one: Food or Transportation.',
+        },
+        surplus: {
+          title: 'Pay yourself first',
+          text: 'As soon as money comes in, move a portion to a savings envelope before spending it.',
+        },
+        generic: [
+          {
+            title: '50/30/20 Rule',
+            text: 'Allocate 50% to needs, 30% to wants, and 20% to savings or debt payments.',
+          },
+          {
+            title: 'Record the small stuff',
+            text: 'Small expenses add up more than you think. Register them instantly.',
+          },
+          {
+            title: '24-hour rule',
+            text: 'Before buying something non-essential, wait 24 hours. See if you still want it.',
+          },
+        ],
       },
-      {
-        title: 'Antojo de 24 horas',
-        text: 'Antes de comprar algo no esencial, esperá 24 horas. Vas a ver si lo seguís queriendo.',
-      },
-    ];
-    return generic[new Date().getDate() % generic.length];
+    };
+
+    const t = tips[language];
+    
+    if (ctx.hasNoTransactions) return t.noTransactions;
+    if (ctx.others === 0) return t.noOthers;
+    if (ctx.noBudgets) return t.noBudgets;
+    if (ctx.hasSurplus) return t.surplus;
+    
+    return t.generic[new Date().getDate() % t.generic.length];
   }
 }
